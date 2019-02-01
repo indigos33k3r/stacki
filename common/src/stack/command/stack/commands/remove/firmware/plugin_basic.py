@@ -11,7 +11,7 @@
 # @rocks@
 
 import stack.commands
-from stack.exception import ArgRequired, ArgError, ParamError, ParamRequired, CommandError
+from stack.exception import ArgError, ParamError, ParamRequired, CommandError
 from pathlib import Path
 
 class Plugin(stack.commands.Plugin):
@@ -21,68 +21,107 @@ class Plugin(stack.commands.Plugin):
 		return 'basic'
 
 	def run(self, args):
-		params, args = args
+		params, versions = args
 		make, model = self.owner.fillParams(
-			names = [('make', None), ('model', None)],
+			names = [('make', ''), ('model', '')],
 			params = params
 		)
-		# Require at least one version
-		if not args:
-			raise ArgRequired(cmd = self.owner, arg = 'version')
-		# make and model are required
-		if make is None:
-			raise ParamRequired(cmd = self.owner, param = 'make')
-		if model is None:
-			raise ParamRequired(cmd = self.owner, param = 'model')
 
-		# get rid of any duplicate names
-		versions = self.owner.remove_duplicates(args)
-		# ensure the make and model already exist
-		if not self.owner.make_exists(make):
-			raise ParamError(
-				cmd = self.owner,
-				param = 'make',
-				msg = f"The firmware make {make} doesn't exist."
-			)
-		if not self.owner.model_exists(make, model):
-			raise ParamError(
-				cmd = self.owner,
-				param = 'model',
-				msg = f"The firmware model {model} for make {make} doesn't exist."
-			)
-		# ensure the versions exist
-		try:
-			self.owner.validate_firmwares_exist(make = make, model = model, versions = versions)
-		except CommandError as exception:
-			raise ArgError(
-				cmd = self.owner,
-				arg = 'version',
-				msg = exception.message()
-			)
+		# process make if present
+		if make:
+			# ensure the make exists
+			if not self.owner.make_exists(make = make):
+				raise ParamError(
+					cmd = self.owner,
+					param = 'make',
+					msg = f"The make {make} doesn't exist."
+				)
+		# process model if present
+		if model:
+			# make is now required
+			if not make:
+				raise ParamRequired(cmd = self.owner, param = 'make')
+			# ensure the model exists
+			if not self.owner.model_exists(make = make, model = model):
+				raise ParamError(
+					cmd = self.owner,
+					param = 'model',
+					msg = f"The model {model} doesn't exist for make {make}."
+				)
+		# Process versions if present
+		if versions:
+			# make and model are now required
+			if not make:
+				raise ParamRequired(cmd = self.owner, param = 'make')
+			if not model:
+				raise ParamRequired(cmd = self.owner, param = 'model')
+			# get rid of any duplicate names
+			versions = self.owner.remove_duplicates(args = versions)
+			# ensure the versions exist
+			try:
+				self.owner.validate_firmwares_exist(make = make, model = model, versions = versions)
+			except CommandError as exception:
+				raise ArgError(
+					cmd = self.owner,
+					arg = 'version',
+					msg = exception.message()
+				)
 
-		# get the firmware to remove
-		firmware_to_remove = []
-		for version in versions:
-			row = self.owner.db.select(
-				'''
-				firmware.id, firmware.file
-				FROM firmware
-					INNER JOIN firmware_model
-						ON firmware.model_id=firmware_model.id
-					INNER JOIN firmware_make
-						ON firmware_model.make_id=firmware_make.id
-				WHERE firmware.version=%s AND firmware_make.name=%s AND firmware_model.name=%s
-				''',
-				(version, make, model)
-			)[0]
-			firmware_to_remove.append((row[0], row[1]))
+		# If versions are specified, get the specific versions to remove
+		if versions:
+			firmware_to_remove = [
+				(row[0], row[1]) for row in self.owner.db.select(
+					'''
+					firmware.id, firmware.file
+					FROM firmware
+						INNER JOIN firmware_model
+							ON firmware.model_id=firmware_model.id
+						INNER JOIN firmware_make
+							ON firmware_model.make_id=firmware_make.id
+					WHERE firmware.version IN %s AND firmware_make.name=%s AND firmware_model.name=%s
+					''',
+					(versions, make, model)
+				)
+			]
+		# Else if make and model are specified, remove all firmwares for that make and model
+		elif make and model:
+			firmware_to_remove = [
+				(row[0], row[1]) for row in self.owner.db.select(
+					'''
+					firmware.id, firmware.file
+					FROM firmware
+						INNER JOIN firmware_model
+							ON firmware.model_id=firmware_model.id
+						INNER JOIN firmware_make
+							ON firmware_model.make_id=firmware_make.id
+					WHERE firmware_make.name=%s AND firmware_model.name=%s
+					''',
+					(make, model)
+				)
+			]
+		# Else if make is specified, remove all firmwares for that make
+		elif make:
+			firmware_to_remove = [
+				(row[0], row[1]) for row in self.owner.db.select(
+					'''
+					firmware.id, firmware.file
+					FROM firmware
+						INNER JOIN firmware_model
+							ON firmware.model_id=firmware_model.id
+						INNER JOIN firmware_make
+							ON firmware_model.make_id=firmware_make.id
+					WHERE firmware_make.name=%s
+					''',
+					(make,)
+				)
+			]
+		# otherwise remove all firmware
+		else:
+			firmware_to_remove = [
+				(row[0], row[1]) for row in self.owner.db.select('firmware.id, firmware.file FROM firmware')
+			]
 
 		# remove the file and then the db entry for each firmware to remove
 		for firmware_id, file_path in firmware_to_remove:
 			Path(file_path).resolve(strict = True).unlink()
-			self.owner.db.execute(
-				'''
-				DELETE FROM firmware WHERE id=%s
-				''',
-				firmware_id
-			)
+			self.owner.db.execute('DELETE FROM firmware WHERE id=%s', firmware_id)

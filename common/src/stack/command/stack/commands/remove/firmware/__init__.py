@@ -21,19 +21,35 @@ class Command(command):
 	Removes firmware images from stacki.
 
 	<arg type='string' name='version' repeat='1'>
-	One or more firmware versions to be removed.
+	Zero or more firmware versions to be removed. If no versions are specified, all will be removed.
+	If one or more versions are specified, the make and model parameters are required.
 	</arg>
 
 	<param type='string' name='make'>
-	The firmware make to remove this firmware image from.
+	The optional make of the firmware to remove.
+	If this is specified but no versions or model are specified, this will remove all firmwares for the make.
 	</param>
 
 	<param type='string' name='model'>
-	The firmware model to remove this firmware image from.
+	The optional model of the firmware to remove.
+	If this is specified, make is required.
+	If no versions are specified but make and model are specified, all firmwares for that make and model will be removed.
 	</param>
 
-	<example cmd="remove firmware 3.6.5002 make=mellanox model=7800">
-	Removes the firmware with version 3.6.5002 for the mellanox 7800 make and model.
+	<example cmd="remove firmware">
+	Removes all firmware.
+	</example>
+
+	<example cmd="remove firmware 3.6.5002 make=mellanox model=m7800">
+	Removes the firmware with version 3.6.5002 for the mellanox m7800 make and model.
+	</example>
+
+	<example cmd="remove firmware make=mellanox">
+	Removes all firmware for the mellanox make.
+	</example>
+
+	<example cmd="remove firmware make=mellanox model=m7800">
+	Removes all firmware for the mellanox make and m7800 model.
 	</example>
 	"""
 

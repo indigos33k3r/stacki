@@ -89,33 +89,42 @@ class Implementation(stack.commands.Implementation):
 	def run(self, args):
 		switch_upgrade_args = {}
 		# for each switch, build a set of args
-		for switch_name, values_dict in args.items():
-			current_firmware_version = values_dict['current_firmware_version']
-			firmware_file_version = values_dict['version']
+		for switch_name_make_model, firmware_info in args.items():
+			# There is no currently known valid multi-file use case for mellanox.
+			# We don't care if the user tried to force multiple firmware files down our throats.
+			if len(firmware_info.firmware_files) > 1:
+				raise CommandError(
+					self.owner,
+					msg = (
+						"Firmware update for mellanox switches cannot operate on multiple firmware files at once."
+						" Please fix your configuration and try again."
+					)
+				)
+			firmware_file = firmware_info.firmware_files.pop()
 
 			kwargs = {
-				'username': values_dict['attrs'].get('switch_username', None),
-				'password': values_dict['attrs'].get('switch_password', None)
+				'username': firmware_info.host_attrs.get('switch_username', None),
+				'password': firmware_info.host_attrs.get('switch_password', None)
 			}
 
 			kwargs = {key: value for key, value in kwargs.items() if value is not None}
 
-			notice = f'Syncing firmware {firmware_file_version} for {switch_name}.'
+			notice = f'Syncing firmware {firmware_file.version} for {switch_name_make_model.host}.'
 			# check for downgrade as we have to do extra steps
-			downgrade = current_firmware_version > firmware_file_version
+			downgrade = firmware_info.current_version > firmware_file.version
 			if downgrade:
-				notice += f' This is a downgrade from {current_firmware_version} and will perform a factory reset.'
+				notice += f' This is a downgrade from {firmware_info.current_version} and will perform a factory reset.'
 			self.owner.notify(notice)
 			# build the args
-			switch_upgrade_args[switch_name] = {
-				'firmware_url': values_dict['url'],
+			switch_upgrade_args[switch_name_make_model.host] = {
+				'firmware_url': firmware_file.url,
 				'downgrade': downgrade,
 				**kwargs,
 			}
 
 		errors = []
 		# now run each switch upgrade in parallel
-		with ThreadPoolExecutor(thread_name_prefix = 'm7800_firmware_update') as executor:
+		with ThreadPoolExecutor(thread_name_prefix = 'mellanox_firmware_update') as executor:
 			futures = [
 				executor.submit(self.update_firmware, switch_name = switch_name, **switch_args)
 				for switch_name, switch_args in switch_upgrade_args.items()

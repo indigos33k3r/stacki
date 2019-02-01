@@ -22,14 +22,12 @@ class Plugin(stack.commands.Plugin):
 		# If expanded is true, also list any user defined implementations and version regexes
 		if args:
 			makes = {
-				'keys': ['make', 'user_specified_imp', 'version_regex_name'],
+				'keys': ['make', 'version_regex_name'],
 				'values': [
 					(row[0], row[1:]) for row in self.owner.db.select(
 						"""
-						firmware_make.name, firmware_imp.name, firmware_version_regex.name
+						firmware_make.name, firmware_version_regex.name
 						FROM firmware_make
-							LEFT JOIN firmware_imp
-								ON firmware_make.imp_id = firmware_imp.id
 							LEFT JOIN firmware_version_regex
 								ON firmware_make.version_regex_id = firmware_version_regex.id
 						"""

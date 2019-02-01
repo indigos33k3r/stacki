@@ -24,8 +24,14 @@ class Command(stack.commands.add.firmware.command):
 	The maker of the models being added. If this does not correspond to an already existing make, one will be added.
 	</param>
 
-	<example cmd="add firmware model awesome_9001 mediocre_5200 make='boss hardware corp'">
+	<param type='string' name='imp'>
+	The implementation name to run for the models being added. This should be the name of the implementation file minus the 'imp_' prefix and file extension.
+	If this does not correspond to an already existing imp, one will be added.
+	</param>
+
+	<example cmd="add firmware model awesome_9001 mediocre_5200 make='boss hardware corp' imp=boss_hardware_corp">
 	Adds two models with the names 'awesome_9001' and 'mediocre_5200' to the set of available firmware models under the 'boss hardware corp' make.
+	This also sets the implementation to run for those models as the one named 'imp_boss_hardware_corp.py'.
 	</example>
 	"""
 

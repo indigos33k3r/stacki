@@ -14,26 +14,25 @@ import stack.commands
 from stack.exception import ArgRequired, ParamRequired, ParamError
 
 class Plugin(stack.commands.Plugin):
-	"""Attempts to associate an implementation with models."""
+	"""Attempts to associate an implementation with makes."""
 
 	def provides(self):
 		return 'basic'
 
 	def run(self, args):
-		params, args = args
-		make, imp, = self.owner.fillParams(
+		params, models = args
+		imp, make, = self.owner.fillParams(
 			names = [
-				('make', ''),
 				('imp', ''),
+				('make', ''),
 			],
 			params = params
 		)
 		# Require model names
-		if not args:
-			raise ArgRequired(cmd = self.owner, arg = 'model')
+		if not models:
+			raise ArgRequired(cmd = self.owner, arg = 'models')
 
-		args = self.owner.remove_duplicates(args = args)
-		# Require a make
+		# The make is required
 		if not make:
 			raise ParamRequired(cmd = self.owner, param = 'make')
 		# The make must exist
@@ -43,8 +42,10 @@ class Plugin(stack.commands.Plugin):
 				param = 'make',
 				msg = f'The make {make} does not exist.'
 			)
+
+		models = self.owner.remove_duplicates(args = models)
 		# The models must exist
-		self.owner.validate_models_exist(make = make, models = args)
+		self.owner.validate_models_exist(make = make, models = models)
 		# A implementation is required
 		if not imp:
 			raise ParamRequired(cmd = self.owner, param = 'imp')
@@ -53,17 +54,19 @@ class Plugin(stack.commands.Plugin):
 			raise ParamError(
 				cmd = self.owner,
 				param = 'imp',
-				msg = f'The implementation {imp} does not exist in the database.'
+				msg = f'The implementation {imp} does not exist.'
 			)
 
 		# get the implementation ID
-		imp_id = self.owner.get_imp_id(imp_name = imp)
-		# associate the models with the imp
+		imp_id = self.owner.get_imp_id(imp = imp)
+		# associate the firmware versions with the imp
 		self.owner.db.execute(
 			"""
 			UPDATE firmware_model
-				INNER JOIN firmware_make ON firmware_make.id = firmware_model.make_id
-			SET firmware_model.imp_id=%s WHERE firmware_model.name IN %s AND firmware_make.name=%s
+				INNER JOIN firmware_make
+					ON firmware_model.make_id = firmware_make.id
+			SET firmware_model.imp_id=%s
+			WHERE firmware_make.name = %s AND firmware_model.name IN %s
 			""",
-			(imp_id, args, make)
+			(imp_id, make, args)
 		)

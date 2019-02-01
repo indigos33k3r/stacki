@@ -11,9 +11,12 @@
 # @rocks@
 
 from contextlib import ExitStack
-from functools import partial
+from pathlib import Path
+import inspect
 import stack.commands
-from stack.exception import ArgRequired, ArgUnique, ArgError, ParamRequired, ParamError
+import stack.commands.list.host.firmware
+import stack.commands.sync.host.firmware
+from stack.exception import CommandError, ArgRequired, ArgUnique, ArgError, ParamRequired, ParamError
 
 class Plugin(stack.commands.Plugin):
 	"""Attempts to add an implementation to the database and associate it appropriately."""
@@ -21,12 +24,8 @@ class Plugin(stack.commands.Plugin):
 	def provides(self):
 		return 'basic'
 
-	def run(self, args):
-		params, args = args
-		make, models, = self.owner.fillParams(
-			names = [('make', ''), ('models', ''),],
-			params = params
-		)
+	def validate_arguments(self, args, make, models):
+		"""Validates all arguments are specified correctly and raises an exception if they are not."""
 		# Require a implementation name
 		if not args:
 			raise ArgRequired(cmd = self.owner, arg = 'name')
@@ -42,8 +41,25 @@ class Plugin(stack.commands.Plugin):
 				arg = 'name',
 				msg = f'An implementation named {imp} already exists in the database.',
 			)
+		# Should exist on disk
+		list_firmware_imp = Path(inspect.getsourcefile(stack.commands.list.host.firmware)).parent.resolve() / f'imp_{imp}.py'
+		sync_firmware_imp = Path(inspect.getsourcefile(stack.commands.sync.host.firmware)).parent.resolve() / f'imp_{imp}.py'
+		if not list_firmware_imp.exists() or not sync_firmware_imp.exists():
+			raise ArgError(
+				cmd = self.owner,
+				arg = 'name',
+				msg = (
+					f'Could not find an implementation named imp_{imp}.py. Please ensure an'
+					f' implementation file is placed into each of the following locations:\n'
+					f'{list_firmware_imp}\n{sync_firmware_imp}'
+				)
+			)
+
 		# Process the make if present.
 		if make:
+			# models now required
+			if not models:
+				raise ParamRequired(cmd = self.owner, param = 'models')
 			# The make must exist
 			if not self.owner.make_exists(make = make):
 				raise ParamError(
@@ -51,17 +67,42 @@ class Plugin(stack.commands.Plugin):
 					param = 'make',
 					msg = f'The make {make} does not exist.'
 				)
-		# Process models if specified
+		# Process the models if present
 		if models:
 			# A make is now required
 			if not make:
 				raise ParamRequired(cmd = self.owner, param = 'make')
 
-			models = self.owner.remove_duplicates(
-				args = (model.strip() for model in models.split(',') if model.strip())
-			)
+			# process a comma separated list of models
+			models = [model.strip() for model in models.split(",") if model.strip()]
 			# The models must exist
-			self.owner.validate_models_exist(make = make, models = models)
+			try:
+				self.owner.validate_models_exist(make = make, models = models)
+			except CommandError as exception:
+				raise ParamError(
+					cmd = self.owner,
+					param = 'models',
+					msg = f'{exception}'
+				)
+
+		return imp, make, models
+
+	def run(self, args):
+		params, args = args
+		make, models, = self.owner.fillParams(
+			names = [
+				('make', ''),
+				('models', ''),
+			],
+			params = params
+		)
+
+		# validate all arguments before use
+		imp, make, models, = self.validate_arguments(
+			args = args,
+			make = make,
+			models = models,
+		)
 
 		with ExitStack() as cleanup:
 			# add the imp
@@ -74,14 +115,18 @@ class Plugin(stack.commands.Plugin):
 				''',
 				args
 			)
-			cleanup.callback(partial(self.owner.call, command = 'remove.firmware.imp', args = [imp]))
+			cleanup.callback(self.owner.call, command = 'remove.firmware.imp', args = [imp])
 
-			# If models are specified, associate it with the relevant models for the given make
-			if models:
-				self.owner.call(command = 'set.firmware.model.imp', args = [*models, f'make={make}', f'imp={imp}'])
-			# else if the make is specified, associate it with just the make
-			elif make:
-				self.owner.call(command = 'set.firmware.make.imp', args = [make, f'imp={imp}'])
+			# If the make and model are specified associate the imp with the make + model
+			if make and models:
+				self.owner.call(
+					command = 'set.firmware.model.imp',
+					args = [
+						*models,
+						f'make={make}',
+						f'imp={imp}',
+					]
+				)
 			# else no association, just put it in the database.
 
 			# everything worked, dismiss cleanup

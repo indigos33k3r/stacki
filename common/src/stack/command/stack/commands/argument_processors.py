@@ -146,6 +146,28 @@ class FirmwareArgumentProcessor:
 				msg = f"The following firmware versions don't exist for make {make} and model {model}: {missing_versions}."
 			)
 
+	def get_firmware_id(self, make, model, version):
+		"""Get the ID of the firmware version with the provided version for the provided make and model.
+
+		This will raise a CommandError if the firmware version matching the provided information doesn't exist.
+		"""
+		row = self.db.select(
+			'''
+			firmware.id
+			FROM firmware
+				INNER JOIN firmware_model
+					ON firmware.model_id=firmware_model.id
+				INNER JOIN firmware_make
+					ON firmware_model.make_id=firmware_make.id
+			WHERE firmware_make.name=%s AND firmware_model.name=%s AND firmware.version=%s
+			''',
+			(make, model, version)
+		)
+		if not row:
+			raise CommandError(cmd = self, msg = f"Firmware version {version} doesn't exist for make {make} and model {model}.")
+
+		return row[0][0]
+
 	def get_firmware_url(self, hostname, firmware_file):
 		"""Attempts to get a url to allow a backend to download the provided firmware file from the front end.
 
@@ -209,14 +231,14 @@ class FirmwareArgumentProcessor:
 				msg = f"The following firmware implementations don't exist in the database: {missing_imps}."
 			)
 
-	def get_imp_id(self, imp_name):
+	def get_imp_id(self, imp):
 		"""Get the ID of the implementation with the provided name.
 
 		This will raise a CommandError if the implementation with the provided name doesn't exist.
 		"""
-		row = self.db.select('id FROM firmware_imp WHERE name=%s', imp_name)
+		row = self.db.select('id FROM firmware_imp WHERE name=%s', imp)
 		if not row:
-			raise CommandError(cmd = self, msg = f"Firmware implementation {imp_name} doesn't exist in the database.")
+			raise CommandError(cmd = self, msg = f"Firmware implementation {imp} doesn't exist in the database.")
 
 		return row[0][0]
 

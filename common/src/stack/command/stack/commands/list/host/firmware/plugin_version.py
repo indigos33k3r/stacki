@@ -5,6 +5,7 @@
 # @copyright@
 
 import re
+from collections import namedtuple
 import stack.commands
 from stack.exception import CommandError
 import stack.firmware
@@ -24,10 +25,10 @@ class Plugin(stack.commands.Plugin):
 		"""
 		# drop any results that didn't have any errors and aggregate the rest into one exception
 		error_messages = []
-		for error in [
+		for error in (
 			value.exception for value in results.values()
 			if value is not None and value.exception is not None
-		]:
+		):
 			# if this looks like a stacki exception type, grab the message from it.
 			if hasattr(error, 'message') and callable(getattr(error, 'message')):
 				error_messages.append(error.message())
@@ -41,162 +42,74 @@ class Plugin(stack.commands.Plugin):
 				msg = f"Errors occurred while listing firmware:\n{error_message}"
 			)
 
-	def run_make(self, hosts, host_attrs, user_imps):
-		"""Try to run the make implementation for all provided hosts in parallel and gather the results.
-
-		This will raise a CommandError if any of the implementations raised exceptions. The error messages
-		from the implementations will be aggregated into the CommandError raised.
-		"""
-		# remap hosts + their attributes to implementation names
-		mapped_by_imp_name = {}
-		for host in hosts:
-			user_imp = user_imps[host]
-			# if the user specified a specific implementation to run for this host, use that.
-			if user_imp:
-				# update if the imp already exists in the map, otherwise add a new key.
-				if user_imp in mapped_by_imp_name:
-					mapped_by_imp_name[user_imp].update({host: host_attrs[host]})
-				else:
-					mapped_by_imp_name[user_imp] = {host: host_attrs[host]}
-			# otherwise use the normal name resolution based on attributes
-			else:
-				imp_name = f'{host_attrs[host][stack.firmware.MAKE_ATTR]}'
-				# update if the imp already exists in the map, otherwise add a new key.
-				if imp_name in mapped_by_imp_name:
-					mapped_by_imp_name[imp_name].update(
-						{host: host_attrs[host]}
-					)
-				else:
-					mapped_by_imp_name[imp_name] = {host: host_attrs[host]}
-
-		# get results and check for any errors
-		results = self.owner.run_implementations_parallel(
-			implementation_mapping = mapped_by_imp_name,
-			display_progress = True,
-		)
-		self.check_errors(results = results)
-
-		return results
-
-	def run_make_model(self, hosts, host_attrs, user_imps):
-		"""Try to run the make + model implementation for all provided hosts in parallel and gather the results.
-
-		This will raise a CommandError if any of the implementations raised exceptions. The error messages
-		from the implementations will be aggregated into the CommandError raised.
-		"""
-		# remap hosts + their attributes to implementation names
-		mapped_by_imp_name = {}
-		for host in hosts:
-			user_imp = user_imps[host]
-			# if the user specified a specific implementation to run for this host, use that.
-			if user_imp:
-				# update if the imp already exists in the map, otherwise add a new key.
-				if user_imp in mapped_by_imp_name:
-					mapped_by_imp_name[user_imp].update({host: host_attrs[host]})
-				else:
-					mapped_by_imp_name[user_imp] = {host: host_attrs[host]}
-			# otherwise use the normal name resolution based on attributes
-			else:
-				imp_name = f'{host_attrs[host][stack.firmware.MAKE_ATTR]}_{host_attrs[host][stack.firmware.MODEL_ATTR]}'
-				# update if the imp already exists in the map, otherwise add a new key.
-				if imp_name in mapped_by_imp_name:
-					mapped_by_imp_name[imp_name].update(
-						{host: host_attrs[host]}
-					)
-				else:
-					mapped_by_imp_name[imp_name] = {host: host_attrs[host]}
-
-		# get results and check for any errors
-		results = self.owner.run_implementations_parallel(
-			implementation_mapping = mapped_by_imp_name,
-			display_progress = True,
-		)
-		self.check_errors(results = results)
-
-		return results
-
 	def run(self, args):
-		hosts, expanded, hashit = args
-
-		host_results = {host: [] for host in hosts}
+		# Unpack args.
+		CommonKey, CommonResult, hosts_makes_models, expanded, hashit = args
+		hosts = [host_make_model.host for host_make_model in hosts_makes_models]
 		# get all host attrs up front
 		host_attrs = self.owner.getHostAttrDict(host = hosts)
 
-		# get hosts where the make and model are set, otherwise there's nothing to look up.
-		hosts_to_check = [
-			host for host in hosts
-			if all(key in host_attrs[host] for key in (stack.firmware.MAKE_ATTR, stack.firmware.MODEL_ATTR))
-		]
-		host_make_imps = {}
-		host_model_imps = {}
-		# get the user defined implementations for make and model, if any exist
-		for host in hosts_to_check:
-			row = self.db.select(
+		mapped_by_imp_name = {}
+		# don't look in the db if here are no hosts.
+		if hosts:
+			for row in self.owner.db.select(
 				"""
-				make_imp.name, model_imp.name
-				FROM firmware_make
+				firmware_imp.name, nodes.Name, firmware_make.name, firmware_model.name
+				FROM firmware_mapping
+					INNER JOIN nodes
+						ON firmware_mapping.node_id = nodes.ID
+					INNER JOIN firmware
+						ON firmware_mapping.firmware_id = firmware.id
 					INNER JOIN firmware_model
+						ON firmware.model_id = firmware_model.id
+					INNER JOIN firmware_make
 						ON firmware_model.make_id = firmware_make.id
-					LEFT JOIN firmware_imp as make_imp
-						ON firmware_make.imp_id = make_imp.id
-					LEFT JOIN firmware_imp as model_imp
-						ON firmware_model.imp_id = model_imp.id
-				WHERE firmware_make.name=%s AND firmware_model.name=%s
+					INNER JOIN firmware_imp
+						ON firmware_model.imp_id = firmware_imp.id
+				WHERE nodes.Name IN %s
 				""",
-				(host_attrs[host][stack.firmware.MAKE_ATTR], host_attrs[host][stack.firmware.MODEL_ATTR])
-			)
-			host_make_imps[host] = row[0][0]
-			host_model_imps[host] = row[0][1]
+				(hosts,)
+			):
+				imp, host, make, model = row
+				if imp in mapped_by_imp_name:
+					mapped_by_imp_name[imp].update({CommonKey(host, make, model): host_attrs[host]})
+				else:
+					mapped_by_imp_name[imp] = {CommonKey(host, make, model): host_attrs[host]}
 
-		# run the more specific make + model implementations first as we prefer those results over the more
-		# generic make only implementation. This will raise an exception if any implementations raised an
-		# exception.
-		make_model_results_by_imp = self.run_make_model(
-			hosts = hosts_to_check,
-			host_attrs = host_attrs,
-			user_imps = host_model_imps,
+		# run the implementations in parallel.
+		results_by_imp = self.owner.run_implementations_parallel(
+			implementation_mapping = mapped_by_imp_name,
+			display_progress = True,
 		)
-		make_model_results_by_host = {
-			host: version for host, version in flatten(
-				results.result.items() for results in make_model_results_by_imp.values()
+		# Check for any errors. This will raise an exception if any implementations raised an exception.
+		self.check_errors(results = results_by_imp)
+		# rebuild the results as (host, make, model) mapped to version
+		results_by_host_make_model = {
+			host_make_model: version for host_make_model, version in flatten(
+				results.result.items() for results in results_by_imp.values()
 				if results is not None and results.result is not None
-			) if version is not None
+			)
 		}
-		# determine the remaining hosts to run through the more generic implementation based on which hosts
-		# have no version results, and run the more generic make implementation on them. This will raise an
-		# exception if any implementations raised an exception.
-		make_results_by_imp = self.run_make(
-			hosts = [
-				host for host in hosts_to_check if make_model_results_by_host.get(host) is None
-			],
-			host_attrs = host_attrs,
-			user_imps = host_make_imps,
-		)
-		# now we get the results by host for hosts which actually had a value returned
-		make_results_by_host = {
-			host: version for host, version in flatten(
-				results.result.items() for results in make_results_by_imp.values()
-				if results is not None and results.result is not None
-			) if version is not None
-		}
-		# unpack into the final set of results by host, preferring the results from the make + model implementation
-		results_by_host = {**make_results_by_host, **make_model_results_by_host}
 
 		# Use the version_regex (if set) to parse out and validate the version numbers returned by the implementations
-		for host, version in results_by_host.items():
+		for host_make_model, version in results_by_host_make_model.items():
 			regex_obj = self.owner.try_get_version_regex(
-				make = host_attrs[host][stack.firmware.MAKE_ATTR],
-				model = host_attrs[host][stack.firmware.MODEL_ATTR],
+				make = host_make_model.make,
+				model = host_make_model.model,
 			)
 			if regex_obj:
 				match = re.search(regex_obj.regex, version, re.IGNORECASE)
 				if not match:
-					results_by_host[host] = f"{version} (Doesn't validate using the version_regex named {regex_obj.name} and will be ignored by sync)"
+					results_by_host_make_model[host_make_model] = f"{version} (Doesn't validate using the version_regex named {regex_obj.name} and will be ignored by sync)"
 				else:
-					results_by_host[host] = match.group()
+					results_by_host_make_model[host_make_model] = match.group()
 
-		# finally fill out all the hosts, setting None for ones that had no results
-		for host in hosts:
-			host_results[host].append(results_by_host.get(host))
+		# Do a final pass to turn the results into a list as the top level command expects.
+		# Also set None for host + make + model combos that had no results.
+		for host_make_model in hosts_makes_models:
+			if host_make_model not in results_by_host_make_model:
+				results_by_host_make_model[host_make_model] = [None]
+			else:
+				results_by_host_make_model[host_make_model] = [results_by_host_make_model[host_make_model]]
 
-		return {'keys': ['current firmware version'], 'values': host_results}
+		return CommonResult(header = ['current_firmware_version'], values = results_by_host_make_model)

@@ -15,7 +15,6 @@ from stack.exception import ArgRequired, ArgUnique, ArgError, ParamRequired, Par
 import stack.firmware
 from pathlib import Path
 from contextlib import ExitStack
-from functools import partial
 import re
 
 class Plugin(stack.commands.Plugin):
@@ -44,7 +43,7 @@ class Plugin(stack.commands.Plugin):
 
 		Returns the validated arguments if all checks are successful
 		"""
-		source, make, model, hash_value, hash_alg = params
+		source, make, model, imp, hosts, hash_value, hash_alg = params
 		# Require a version name
 		if not version:
 			raise ArgRequired(cmd = self.owner, arg = 'version')
@@ -54,13 +53,16 @@ class Plugin(stack.commands.Plugin):
 
 		version_number = version[0]
 		# require a source
-		if source is None:
+		if not source:
 			raise ParamRequired(cmd = self.owner, param = 'source')
 		# require both make and model
-		if make is None:
+		if not make:
 			raise ParamRequired(cmd = self.owner, param = 'make')
-		if model is None:
+		if not model:
 			raise ParamRequired(cmd = self.owner, param = 'model')
+		# require an implementation
+		if not imp:
+			raise ParamRequired(cmd = self.owner, param = 'imp')
 		# require hash_alg to be one of the always present ones
 		if hash_alg not in stack.firmware.SUPPORTED_HASH_ALGS:
 			raise ParamError(
@@ -70,35 +72,48 @@ class Plugin(stack.commands.Plugin):
 			)
 		# validate the version matches the version_regex if one is set.
 		self.validate_version(version = version_number, make = make, model = model)
+		# Convert hosts to a list if set
+		if hosts:
+			hosts = [host.strip() for host in hosts.split(",") if host.strip()]
+			# Validate the hosts exist.
+			self.owner.getHosts(args = hosts)
 
-		return (version_number, source, make, model, hash_value, hash_alg)
+		return (version_number, source, make, model, imp, hosts, hash_value, hash_alg)
 
-	def add_related_entries(self, make, model, cleanup):
+	def add_related_entries(self, make, model, imp, cleanup):
 		"""Adds the related database entries if they do not exist."""
+		# create the implementation if it doesn't already exist
+		if not self.owner.imp_exists(imp = imp):
+			self.owner.call(command = 'add.firmware.imp', args = [imp])
+			cleanup.callback(self.owner.call, command = 'remove.firmware.imp', args = [imp])
+
 		# create the make if it doesn't already exist
 		if not self.owner.make_exists(make = make):
 			self.owner.call(command = 'add.firmware.make', args = [make])
-			cleanup.callback(partial(self.owner.call, command = 'remove.firmware.make', args = [make]))
+			cleanup.callback(self.owner.call, command = 'remove.firmware.make', args = [make])
 
 		# create the model if it doesn't already exist
 		if not self.owner.model_exists(make = make, model = model):
-			self.owner.call(command = 'add.firmware.model', args = [model, f'make={make}'])
-			cleanup.callback(partial(self.owner.call, command = 'remove.firmware.model', args = [model, f'make={make}']))
+			self.owner.call(command = 'add.firmware.model', args = [model, f'make={make}', f'imp={imp}'])
+			cleanup.callback(self.owner.call, command = 'remove.firmware.model', args = [model, f'make={make}'])
 
 	def run(self, args):
 		params, version = args
 		params = self.owner.fillParams(
 			names = [
-				('source', None),
-				('make', None),
-				('model', None),
+				('source', ''),
+				('make', ''),
+				('model', ''),
+				('imp', ''),
+				('hosts', ''),
 				('hash', None),
 				('hash_alg', 'md5')
 			],
 			params = params
 		)
+
 		# validate the args before use
-		version, source, make, model, hash_value, hash_alg = self.validate_arguments(
+		version, source, make, model, imp, hosts, hash_value, hash_alg = self.validate_arguments(
 			version = version,
 			params = params
 		)
@@ -120,7 +135,17 @@ class Plugin(stack.commands.Plugin):
 					make = make,
 					model = model
 				)
-				cleanup.callback(file_path.unlink)
+
+				def file_cleanup():
+					"""Remove the file if it exists.
+
+					Needed because "stack remove firmware" also removes the file
+					and that might have been run as part of the exit stack unwinding.
+					"""
+					if file_path.exists():
+						file_path.unlink()
+
+				cleanup.callback(file_cleanup)
 			except stack.firmware.FirmwareError as exception:
 				raise ParamError(
 					cmd = self.owner,
@@ -138,7 +163,7 @@ class Plugin(stack.commands.Plugin):
 				)
 
 			# add make and model database entries if needed.
-			self.add_related_entries(make = make, model = model, cleanup = cleanup)
+			self.add_related_entries(make = make, model = model, imp = imp, cleanup = cleanup)
 
 			# get the ID of the model to associate with
 			model_id = self.owner.get_model_id(make, model)
@@ -157,6 +182,11 @@ class Plugin(stack.commands.Plugin):
 				''',
 				(model_id, source, version, hash_alg, file_hash, str(file_path))
 			)
+			cleanup.callback(self.owner.call, command = "remove.firmware", args = [version, f"make={make}", f"model={model}"])
+
+			# if hosts are provided, set the firmware relation
+			if hosts:
+				self.owner.call(command = "add.firmware.mapping", args = [*hosts, f"version={version}", f"make={make}", f"model={model}"])
 
 			# everything went down without a problem, dismiss the cleanup
 			cleanup.pop_all()

@@ -20,17 +20,22 @@ class Command(stack.commands.add.firmware.command):
 	The name of the implementation file to run, without the "imp_" prepended or the extension appended.
 	</arg>
 
-	<param type='string' name='make'>
-	The optional make that this implementation applies to.
-	</param>
-
 	<param type='string' name='models'>
-	The optional models for the given make that this implementation applies to. Multiple models should be specified as a comma separated list.
+	Zero or more models that this implementation applies to. Multiple models should be specified as a comma separated list.
 	If this is specified, make is also required.
 	</param>
 
-	<example cmd="add firmware imp mellanox_6xxx_7xxx make=Mellanox models=m6036,m7800">
-	Marks the firmware implementation named mellanox_6xxx_7xxx as the one to run for Mellanox m6036 and m7800 devices.
+	<param type='string' name='make'>
+	The optional make of model this implementation applies to.
+	If this is specified, models are also required.
+	</param>
+
+	<example cmd="add firmware imp mellanox_6xxx_7xxx make=Mellanox model=m7800">
+	Adds the firmware implementation named mellanox_6xxx_7xxx and sets it to be the one run for make Mellanox and model m7800.
+	</example>
+
+	<example cmd="add firmware imp mellanox_6xxx_7xxx">
+	This simply adds the implementation named mellanox_6xxx_7xxx to be tracked by stacki.
 	</example>
 	"""
 

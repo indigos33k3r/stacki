@@ -22,7 +22,7 @@ class Plugin(stack.commands.Plugin):
 		# If expanded is true, also list any user defined implementations
 		if args:
 			models = {
-				'keys': ['make', 'model', 'user_specified_imp', 'version_regex_name'],
+				'keys': ['make', 'model', 'implementation', 'version_regex_name'],
 				'values': [
 					(row[0], row[1:])
 					for row in self.owner.db.select(

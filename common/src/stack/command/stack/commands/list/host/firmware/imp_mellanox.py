@@ -4,7 +4,6 @@
 # https://github.com/Teradata/stacki/blob/master/LICENSE.txt
 # @copyright@
 
-import re
 from concurrent.futures import ThreadPoolExecutor
 import stack.commands
 from stack.exception import CommandError
@@ -31,18 +30,22 @@ class Implementation(stack.commands.Implementation):
 	def run(self, args):
 		errors = []
 		# now run each image listing in parallel
-		with ThreadPoolExecutor(thread_name_prefix = 'm7800_firmware_listing') as executor:
-			futures_by_host = {
-				host: executor.submit(self.list_firmware, host = host, switch_attrs = attrs)
-				for host, attrs in args.items()
+		with ThreadPoolExecutor(thread_name_prefix = 'mellanox_firmware_listing') as executor:
+			futures_by_host_make_model = {
+				host_make_model: executor.submit(
+					self.list_firmware,
+					host = host_make_model.host,
+					switch_attrs = attrs
+				)
+				for host_make_model, attrs in args.items()
 			}
 			# now collect the results, adding any errors into the errors list
-			results_by_host = {}
-			for host, future in futures_by_host.items():
+			results_by_host_make_model = {}
+			for host_make_model, future in futures_by_host_make_model.items():
 				if future.exception() is not None:
 					errors.append(future.exception())
 				else:
-					results_by_host[host] = future.result()
+					results_by_host_make_model[host_make_model] = future.result()
 
 		# if there were any errors, aggregate all the errors into one
 		error_messages = []
@@ -60,4 +63,4 @@ class Implementation(stack.commands.Implementation):
 				msg = f"Errors occurred during Mellanox firmware listing:\n{error_message}"
 			)
 
-		return results_by_host
+		return results_by_host_make_model

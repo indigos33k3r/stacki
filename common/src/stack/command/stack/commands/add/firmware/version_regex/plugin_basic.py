@@ -12,7 +12,6 @@
 
 import re
 from contextlib import ExitStack
-from functools import partial
 import stack.commands
 from stack.exception import ArgError, ArgRequired, ArgUnique, ParamRequired, ParamError
 
@@ -93,7 +92,7 @@ class Plugin(stack.commands.Plugin):
 				''',
 				(version_regex, name, description)
 			)
-			cleanup.callback(partial(self.owner.call, command = 'remove.firmware.version_regex', args = [name]))
+			cleanup.callback(self.owner.call, command = 'remove.firmware.version_regex', args = [name])
 
 			# If models are specified, associate it with the relevant models for the given make
 			if models:
