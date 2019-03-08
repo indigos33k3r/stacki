@@ -12,15 +12,14 @@
 
 import os
 import sys
+import tempfile
+import pathlib
 import subprocess
 import stack.file
+from stack.util import _exec
 import stack.commands
-import tempfile
 from stack.download import fetch, FetchError
 from stack.exception import CommandError, ParamRequired, UsageError
-from urllib.parse import urlparse
-from stack.util import _exec
-
 
 class command(stack.commands.add.command):
 	pass
@@ -159,28 +158,43 @@ class Command(command):
 				""", (name, version, release, arch, OS, URL)
 			)
 
-	# Call the sevice ludicrous-cleaner
-	def clean_ludicrous_packages(self):
-		_command = 'systemctl start ludicrous-cleaner'
-		p = subprocess.Popen(_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+	def mount(self, iso_name):
+		# ensure iso isn't already mounted
+		# this appears to be a sles12 quirk?  `mount some.iso /mntpt1; mount some.iso /mntpt2` fails
+		for line in _exec('mount').stdout.splitlines():
+			line = line.split()
+			if iso_name != line[0]:
+				continue
 
+			msg = f'"{iso_name}" is already mounted at {line[2]}: Attempting to unmount.\n')
+			stack.commands.Log(msg)
+			try_umount = _exec(f'umount {other_mountpoint}')
+			if try_umount.returncode != 0:
+				raise CommandError(self, f'{msg}Failed to unmount:\n{try_umount.stderr}')
+			# safe to stop looping...
+			break
+
+		# if we get here, the iso was unmounted or never mounted in the first place
+		tempdir = tempfile.TemporaryDirectory()
+		mount = _exec(f'mount {tempdir.name}', shlexsplit=True)
+		if mount.returncode != 0:
+			raise CommandError(self, 'Pallet could not be added - unable to mount {iso_name}.\n{mount.stderr}')
+
+		return tempdir.name
 
 	def run(self, params, args):
-		(clean, dir, updatedb, dryrun, username, password) = self.fillParams([
-			('clean', 'n'),
+		(clean, stacki_pallet_dir, updatedb, dryrun, username, password) = self.fillParams([
+			('clean', False),
 			('dir', '/export/stack/pallets'),
-			('updatedb', 'y'),
-			('dryrun', 'n'),
+			('updatedb', True),
+			('dryrun', False),
 			('username', None),
 			('password', None),
 		])
 
-		#Validate username and password
-		#need to provide either both or none
-		if username and not password:
-			raise UsageError(self, 'must supply a password with the username')
-		if password and not username:
-			raise UsageError(self, 'must supply a username with the password')
+		# need to provide either both or none
+		if not all((username, password)):
+			raise UsageError(self, 'must supply a password along with the username')
 
 		clean = self.str2bool(clean)
 		updatedb = self.str2bool(updatedb)
@@ -197,18 +211,18 @@ class Command(command):
 		# Get a list of all the iso files mentioned in
 		# the command line. Make sure we get the complete 
 		# path for each file.
-			
+
 		isolist = []
 		network_pallets = []
 		disk_pallets    = []
-		network_isolist = []
 		for arg in args:
 			if arg.startswith(('http', 'ftp')) and arg.endswith('.iso'):
-				network_isolist.append(arg)
+				isolist.append(arg)
 				continue
 			elif arg.startswith(('http', 'ftp')):
 				network_pallets.append(arg)
 				continue
+
 			arg = os.path.join(os.getcwd(), arg)
 			if os.path.exists(arg) and arg.endswith('.iso'):
 				isolist.append(arg)
@@ -220,87 +234,49 @@ class Command(command):
 
 		if self.dryrun:
 			self.beginOutput()
-		if not isolist and not network_pallets and not disk_pallets and not network_isolist:
-			#
-			# no files specified look for a cdrom
-			#
+
+		# CASE 1: no args were specified - check if a pallet is mounted at /mnt/cdrom
+		if not any((isolist, network_pallets, disk_pallets)):
+
 			self.mountPoint = '/mnt/cdrom'
-			rc = os.system('mount | grep %s' % self.mountPoint)
-			if rc == 0:
-				self.copy(clean, dir, updatedb, self.mountPoint)
+			result = _exec(f'mount | grep {self.mountPoint}', shell=True)
+			if result.returncode == 0:
+				self.copy(clean, stacki_pallet_dir, updatedb, self.mountPoint)
 			else:
 				raise CommandError(self, 'no pallets provided and /mnt/cdrom is unmounted')
 
-		for iso in network_isolist:
-			#determine the name of the iso file and get the destined path
-			filename = os.path.basename(urlparse(iso).path)
-			local_path = '/'.join([os.getcwd(), filename])
+		# CASE 2: some of the specified args are .iso files, either local or remote
+		for iso in isolist:
+			# XXX these become 'disk_pallets' ????
+			local_file = iso
+			if iso.startswith(('http', 'ftp')):
+				tempdir = tempfile.TemporaryDirectory()
 
-			net_iso_mounted_somewhere = _exec(f'mount | grep {iso}', shell=True).stdout
-
-			if net_iso_mounted_somewhere:
-				other_mountpoint = net_iso_mounted_somewhere.split(' ')[2]
-				stack.commands.Log(f'ISO with same name as {iso} already mounted on filesystem at {other_mountpoint}: Attempting to unmount.') 
-				try_umount = _exec(f'umount {other_mountpoint}', shell=True)
-				iso_name = os.path.basename(iso)
-				if try_umount.stderr:			
-					raise CommandError(self, f'Failed to unmount {iso_name} at {other_mountpoint}, pallet could not be installed.') 
-
-			try:
-				# passing True will display a % progress indicator in stdout
-				local_path = fetch(iso, username, password, True)
-			except FetchError as e:
-				raise CommandError(self, e)
+				try:
+					# passing True will display a % progress indicator in stdout
+					local_file = fetch(iso, username, password, True, f'{tempdir.name}/{pathlib.Path(iso).name}')
+				except FetchError as e:
+					raise CommandError(self, e)
 
 			cwd = os.getcwd()
-			os.system('mount -o loop %s %s > /dev/null 2>&1' % (local_path, self.mountPoint))
-			self.copy(clean, dir, updatedb, iso)
+			mount_point = mount(iso)
+			self.copy(clean, stacki_pallet_dir, updatedb, iso)
 			os.chdir(cwd)
-			os.system('umount %s > /dev/null 2>&1' % self.mountPoint)
-			print('cleaning up temporary files ...')
-			p = _exec(['rm', filename])
+			result = _exec(f'umount {self.mountPoint}', shlexsplit=True)
+			if iso.startswith(('http', 'ftp')):
+				print('cleaning up temporary files ...')
+				os.unlink(local_file)
 
-		if isolist:
-			#
-			# before we mount the ISO, make sure there are no active
-			# mounts on the mountpoint
-			#
-			file = open('/proc/mounts')
+		# CASE 3: some of the specified args are remote paths to already exploded pallet directories
+		for pallet in network_pallets:
+			self.runImplementation('network_pallet', (clean, stacki_pallet_dir, pallet, updatedb))
 
-			for line in file.readlines():
-				l = line.split()
-				if l[1].strip() == self.mountPoint:
-					cmd = 'umount %s' % self.mountPoint
-					cmd += ' > /dev/null 2>&1'
-					_exec([ cmd ], shell=True)
+		# CASE 4: some of the specified args are local paths to already exploded pallet directories
+		for pallet in disk_pallets:
+			self.runImplementation('disk_pallet', (clean, stacki_pallet_dir, pallet, updatedb))
 
-			for iso in isolist:	# have a set of iso files
-				cwd = os.getcwd()
-				iso_mounted_somewhere = _exec(f'mount | grep {iso}', shell=True).stdout
-
-				if iso_mounted_somewhere:
-					other_mountpoint = iso_mounted_somewhere.split(' ')[2]
-					stack.commands.Log(f'ISO with same name as {iso} already mounted on filesystem at {other_mountpoint}: Attempting to unmount.') 
-					try_umount = _exec(f'umount {other_mountpoint}', shell=True)
-					iso_name = os.path.basename(iso)
-					if try_umount.stderr:			
-						raise CommandError(self, f'Failed to unmount {iso_name} at {other_mountpoint}, pallet could not be installed.') 
-
-				os.system('mount -o loop %s %s > /dev/null 2>&1' % (iso, self.mountPoint))
-				self.copy(clean, dir, updatedb, iso)
-				os.chdir(cwd)
-				os.system('umount %s > /dev/null 2>&1' % self.mountPoint)
-		
-		if network_pallets:
-			for pallet in network_pallets:
-				self.runImplementation('network_pallet', (clean, dir, pallet, updatedb))
-		
-		if disk_pallets:
-			for pallet in disk_pallets:
-				self.runImplementation('disk_pallet', (clean, dir, pallet, updatedb))
-
-		self.endOutput(header=['name', 'version', 'release', 'arch', 'os'], trimOwner=False)
+		if self.dryrun:
+			self.endOutput(header=['name', 'version', 'release', 'arch', 'os'], trimOwner=False)
 
 		# Clear the old packages
-		self.clean_ludicrous_packages()
-
+		_exec('systemctl start ludicrous-cleaner'.split())
