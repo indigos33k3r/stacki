@@ -24,6 +24,7 @@ stack-docker
 stack-ekv
 stack-examples
 stack-kickstart
+stack-migrations
 stack-mq
 stack-pxeboot
 stack-pylib

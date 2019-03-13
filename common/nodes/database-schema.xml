@@ -12,7 +12,6 @@
 	https://github.com/Teradata/stacki/blob/master/LICENSE-ROCKS.txt
 	</stack:rocks>
 
-
 <stack:script stack:stage="install-post">
 
 <stack:file stack:name="/tmp/cluster.sql">
@@ -435,10 +434,8 @@ grant select,update,insert,delete,lock tables on shadow.*  to apache@"&hostname;
 
 /usr/bin/mysql --defaults-extra-file=/etc/root.my.cnf --user=root &lt; /var/db/grants.sql
 
-
 <!--
 	this script can be used to restore a stacki database.
-
 	purposely make it read-only so someone doesn't accidentally execute it.
 -->
 <stack:file stack:name="/var/db/restore-stacki-database.sh" stack:perms="0400">#!/bin/sh

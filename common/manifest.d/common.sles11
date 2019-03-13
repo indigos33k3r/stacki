@@ -11,6 +11,7 @@
 -stack-examples
 -stack-kickstart
 -stack-pxeboot
+-stack-migrations
 -stack-switch
 -stack-report-system
 -stack-wizard

@@ -169,3 +169,19 @@ class TestRemoveSwitchPartition:
 		result = host.run('stack list switch partition switch-0-0 switch-0-1 output-format=json')
 		assert result.rc == 0
 		assert result.stdout.strip() == ''
+
+	def test_remove_switch_cascades(self, host, add_ib_switch, worker_id):
+		# remove switch without any other classifiers should remove all partitions per switch
+		# add second switch
+		add_ib_switch('switch-0-1', '0', '1', 'switch', 'Mellanox', 'm7800', 'infiniband')
+
+		for partition_name in ['aaa', 'default']:
+			result = host.run(f'stack add switch partition switch-0-0 switch-0-1 name={partition_name}')
+			assert result.rc == 0
+
+		result = host.run('stack remove switch switch-0-0 switch-0-1')
+		assert result.rc == 0
+
+		result = host.run(f'mysql cluster{worker_id} -e "select * from ib_partitions"')
+		assert result.rc == 0
+		assert result.stdout.strip() == ''
