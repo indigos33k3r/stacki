@@ -88,15 +88,14 @@ class Command(command):
 		# Populate the info hash. This hash contains pallet
 		# information about all the pallets present on disc.
 
-		p = subprocess.run(['find', '%s' % self.mountPoint, '-type', 'f', '-name', 'roll-*.xml'],
-				   stdout=subprocess.PIPE)
-		dict = {}
-		for filename in p.stdout.decode().split('\n'):
+		result = _exec(f'find {self.mountPoint} -type f -name roll-*.xml', shlexsplit=True)
+		pallet_info = {}
+		for filename in result.stdout.splitlines():
 			if filename:
-				roll = stack.file.RollInfoFile(filename.strip())
-				dict[roll.getRollName()] = roll
+				pallet = stack.file.RollInfoFile(filename.strip())
+				pallet_info[pallet.getRollName()] = pallet
 
-		if len(dict) == 0:
+		if len(pallet_info) == 0:
 			
 			# If the roll_info hash is empty, that means there are
 			# no stacki recognizable rolls on the Disc. This mean
@@ -128,7 +127,7 @@ class Command(command):
 		#
 		# For all pallets present, copy into the pallets directory.
 		
-		for key, info in dict.items():
+		for key, info in pallet_info.items():
 			self.runImplementation('native_%s' % info.getRollOS(),
 					       (clean, prefix, info))
 			name	= info.getRollName()
@@ -159,24 +158,10 @@ class Command(command):
 			)
 
 	def mount(self, iso_name):
-		# ensure iso isn't already mounted
-		# this appears to be a sles12 quirk?  `mount some.iso /mntpt1; mount some.iso /mntpt2` fails
-		for line in _exec('mount').stdout.splitlines():
-			line = line.split()
-			if iso_name != line[0]:
-				continue
-
-			msg = f'"{iso_name}" is already mounted at {line[2]}: Attempting to unmount.\n')
-			stack.commands.Log(msg)
-			try_umount = _exec(f'umount {other_mountpoint}')
-			if try_umount.returncode != 0:
-				raise CommandError(self, f'{msg}Failed to unmount:\n{try_umount.stderr}')
-			# safe to stop looping...
-			break
-
-		# if we get here, the iso was unmounted or never mounted in the first place
+		# TemporaryDirectory() cleans up when the process exits
+		# TODO what happens to tempdir/the actual mount?
 		tempdir = tempfile.TemporaryDirectory()
-		mount = _exec(f'mount {tempdir.name}', shlexsplit=True)
+		mount = _exec(f'mount -r {tempdir.name}', shlexsplit=True)
 		if mount.returncode != 0:
 			raise CommandError(self, 'Pallet could not be added - unable to mount {iso_name}.\n{mount.stderr}')
 
