@@ -76,7 +76,7 @@ class Implementation(stack.commands.Implementation):
 
 		if not name:
 			raise CommandError(self, 'unknown SLES on media')
-		if not vers:
+		if not version:
 			raise CommandError(self, 'unknown SLES version on media')
 
 		OS = 'sles'
@@ -95,4 +95,4 @@ class Implementation(stack.commands.Implementation):
 				if results.returncode != 0:
 					raise CommandError(self, 'patch failed:\n{results.stderr}')
 
-		return name, vers, release, arch, OS, pallet_dir
+		return name, version, release, arch, OS, pallet_dir

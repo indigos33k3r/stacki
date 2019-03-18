@@ -20,7 +20,8 @@ import stack.file
 from stack.util import _exec
 import stack.commands
 from stack.download import fetch, FetchError
-from stack.exception import CommandError, ParamRequired, UsageError
+from stack.exception import CommandError, UsageError
+
 
 class command(stack.commands.add.command):
 	pass
@@ -271,20 +272,20 @@ class Command(command):
 			if pallet.format != 'iso':
 				continue
 
-			local_file = iso
+			local_file = pallet
 			if pallet.is_remote:
 				tempdir = tempfile.TemporaryDirectory()
 
 				try:
 					# passing True will display a % progress indicator in stdout
-					local_file = fetch(iso, username, password, True, f'{tempdir.name}/{pathlib.Path(iso).name}')
+					local_file = fetch(pallet, username, password, True, f'{tempdir.name}/{pathlib.Path(pallet).name}')
 				except FetchError as e:
 					raise CommandError(self, e)
 
 			# TODO do we actually need the cwd?
 			cwd = os.getcwd()
-			self.mountPoint = mount(iso)
-			self.copy(clean, stacki_pallet_dir, updatedb, iso)
+			self.mountPoint = self.mount(pallet)
+			self.copy(clean, stacki_pallet_dir, updatedb, pallet)
 			os.chdir(cwd)
 			# TODO add the umount to an exitstack
 			result = _exec(f'umount {self.mountPoint}', shlexsplit=True)
