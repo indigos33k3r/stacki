@@ -5,7 +5,7 @@ from textwrap import dedent
 
 class TestAddPallet:
 	def test_no_pallet(self, host):
-		# Call add pallet with nothign mounted and no pallets passed in
+		# Call add pallet with nothing mounted and no pallets passed in
 		result = host.run('stack add pallet')
 		assert result.rc == 255
 		assert result.stderr == 'error - no pallets provided and /mnt/cdrom is unmounted\n'
@@ -37,6 +37,35 @@ class TestAddPallet:
 		result = host.run(f'stack add pallet {create_pallet_isos}/minimal-1.0-sles12.x86_64.disk1.iso')
 		assert result.rc == 0
 		assert result.stdout == 'Copying minimal 1.0-sles12 to pallets ...\n'
+
+		# Check it made it in as expected
+		result = host.run('stack list pallet minimal output-format=json')
+		assert result.rc == 0
+		assert json.loads(result.stdout) == [
+			{
+				'name': 'minimal',
+				'version': '1.0',
+				'release': 'sles12',
+				'arch': 'x86_64',
+				'os': 'sles',
+				'boxes': ''
+			}
+		]
+
+	def test_multiple_isos(self, host, host_os, create_pallet_isos, revert_export_stack_pallets):
+		# Add our minimal pallet
+		minimal = f'{create_pallet_isos}/minimal-1.0-sles12.x86_64.disk1.iso'
+
+		if host_os == 'sles':
+			result = host.run('stack add pallet {minimal} /export/isos/SLE-12-SP3-Server-DVD-x86_64-GM-DVD1.iso')
+			assert result.rc == 0
+			assert 'Copying minimal' in result.stdout
+			assert 'Copying SLES 12' in result.stdout
+		else:
+			result = host.run('stack add pallet {minimal} /export/isos/CentOS-7-x86_64-Everything-1708.iso')
+			assert result.rc == 0
+			assert 'Copying minimal' in result.stdout
+			assert 'Copying CentOS' in result.stdout
 
 		# Check it made it in as expected
 		result = host.run('stack list pallet minimal output-format=json')
