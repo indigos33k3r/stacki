@@ -25,7 +25,7 @@ class Implementation(stack.commands.Implementation):
 	"""
 
 	def run(self, args):
-		(clean, prefix, loc, updatedb) = args
+		clean, prefix, loc, updatedb = args
 
 		tempdir = tempfile.mkdtemp()
 		cwd = os.getcwd()
@@ -37,8 +37,7 @@ class Implementation(stack.commands.Implementation):
 			'-np',	# Don't create parent directories
 			'-A', 'roll-*.xml', # Only download roll-*.xml files
 			loc]
-		#self.owner.out.write('%s\n' % ' '.join(wget_cmd))
-		self.owner.out.write('Downloading Pallet Info file\n')
+		self.owner.thisprint('Downloading Pallet Info file\n')
 		s = subprocess.Popen(wget_cmd, stdout=self.owner.out, stderr=subprocess.PIPE)
 		rc = s.wait()
 		o, e = s.communicate()
@@ -83,8 +82,7 @@ class Implementation(stack.commands.Implementation):
 			'-P', destdir, # directory to save files to
 			norm_loc ]
 
-		#self.owner.out.write('%s\n' % ' '.join(wget_cmd))
-		self.owner.out.write('Downloading %s %s-%s pallet\n' % (name, vers, release))
+		self.owner.thisprint('Downloading %s %s-%s pallet\n' % (name, vers, release))
 
 		if not self.owner.dryrun:
 			s = subprocess.Popen(wget_cmd, stdout=self.owner.out, stderr=self.owner.out)

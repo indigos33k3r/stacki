@@ -12,9 +12,10 @@
 
 import os
 import sys
+from functools import partial
 import tempfile
 import pathlib
-import subprocess
+from collections import namedtuple
 import stack.file
 from stack.util import _exec
 import stack.commands
@@ -82,6 +83,39 @@ class Command(command):
 	<related>create pallet</related>
 	"""
 
+	def write_pallet_xml(self, pallet_dir, name, version, release, distro_family, arch):
+		with open(f'{pallet_dir}/roll-{name}.xml', 'w') as xml:
+			xml.write('<roll name="{name}" interface="6.0.2">\n')
+			xml.write('<color edge="white" node="white"/>\n')
+			xml.write('<info version="{version}" release="{release}" arch="{arch}" os="{distro_family}"/>\n')
+			xml.write('<iso maxsize="0" addcomps="0" bootable="0"/>\n')
+			xml.write('<rpm rolls="0" bin="1" src="0"/>\n')
+			xml.write('</roll>\n')
+
+
+	def actually_copy(self, pallet_dir, name, version, release, distro_family, arch, clean):
+		destdir = pathlib.Path(pallet_dir).joinpath(name, version, release, distro_family, arch)
+		if destdir.exists() and clean:
+			self.out.write(f'Cleaning {name} {version}-{release}\n')
+			self.out.write(f'for {arch} from pallets directory\n')
+
+		if destdir.exists() and clean and not self.dryrun:
+			destdir.rmdir()
+
+		self.out.write(f'Copying {name} {version}-{release} pallet ...\n')
+
+		if not destdir.exists() and not self.dryrun:
+			destdir.mkdir(parents=True, exist_ok=True)
+
+		if not self.dryrun:
+			cmd = f'rsync --archive --exclude "TRANS.TBL" {self.mountPoint}/ {destdir}/'
+			result = _exec(cmd, shlexsplit=True)
+			if result.rc != 0:
+				raise CommandError(self, f'Unable to copy pallet:\n{result.stderr}')
+
+		return destdir
+
+
 	def copy(self, clean, prefix, updatedb, URL):
 		"""Copy all the pallets from the CD to Disk"""
 
@@ -128,8 +162,7 @@ class Command(command):
 		# For all pallets present, copy into the pallets directory.
 		
 		for key, info in pallet_info.items():
-			self.runImplementation('native_%s' % info.getRollOS(),
-					       (clean, prefix, info))
+			self.runImplementation('native', (clean, prefix, info))
 			name	= info.getRollName()
 			version	= info.getRollVersion()
 			release	= info.getRollRelease()
@@ -161,7 +194,9 @@ class Command(command):
 		# TemporaryDirectory() cleans up when the process exits
 		# TODO what happens to tempdir/the actual mount?
 		tempdir = tempfile.TemporaryDirectory()
-		mount = _exec(f'mount -r {tempdir.name}', shlexsplit=True)
+		# mount readonly explicitly to get around a weird behavior
+		# in sles12 that prevents re-mounting an already mounted iso
+		mount = _exec(f'mount --read-only {tempdir.name}', shlexsplit=True)
 		if mount.returncode != 0:
 			raise CommandError(self, 'Pallet could not be added - unable to mount {iso_name}.\n{mount.stderr}')
 
@@ -186,33 +221,35 @@ class Command(command):
 		self.dryrun = self.str2bool(dryrun)
 		if self.dryrun:
 			updatedb = False
+			self.thisprint = partial(print, file=sys.stderr)
 			self.out = sys.stderr
 		else:
+			self.thisprint = print
 			self.out = sys.stdout
 
-		temp_mount_dir = tempfile.TemporaryDirectory()
-		self.mountPoint = temp_mount_dir.name
+		self.mountPoint = ''
 
 		# Get a list of all the iso files mentioned in
 		# the command line. Make sure we get the complete 
 		# path for each file.
 
-		isolist = []
-		network_pallets = []
-		disk_pallets    = []
+		# pallets can be a mounted path or an iso, local or remote.
+		PalletArg = namedtuple('PalletArg', ('location', 'format', 'is_remote'))
+
+		pallets = []
 		for arg in args:
 			if arg.startswith(('http', 'ftp')) and arg.endswith('.iso'):
-				isolist.append(arg)
+				pallets.append(PalletArg(arg, 'iso', True))
 				continue
 			elif arg.startswith(('http', 'ftp')):
-				network_pallets.append(arg)
+				pallets.append(PalletArg(arg, 'dir', True))
 				continue
 
 			arg = os.path.join(os.getcwd(), arg)
 			if os.path.exists(arg) and arg.endswith('.iso'):
-				isolist.append(arg)
+				pallets.append(PalletArg(arg, 'iso', False))
 			elif os.path.isdir(arg):
-				disk_pallets.append(arg)
+				pallets.append(PalletArg(arg, 'dir', False))
 			else:
 				msg = "Cannot find %s or %s is not an ISO image"
 				raise CommandError(self, msg % (arg, arg))
@@ -221,8 +258,7 @@ class Command(command):
 			self.beginOutput()
 
 		# CASE 1: no args were specified - check if a pallet is mounted at /mnt/cdrom
-		if not any((isolist, network_pallets, disk_pallets)):
-
+		if not pallets:
 			self.mountPoint = '/mnt/cdrom'
 			result = _exec(f'mount | grep {self.mountPoint}', shell=True)
 			if result.returncode == 0:
@@ -231,10 +267,12 @@ class Command(command):
 				raise CommandError(self, 'no pallets provided and /mnt/cdrom is unmounted')
 
 		# CASE 2: some of the specified args are .iso files, either local or remote
-		for iso in isolist:
-			# XXX these become 'disk_pallets' ????
+		for pallet in pallets:
+			if pallet.format != 'iso':
+				continue
+
 			local_file = iso
-			if iso.startswith(('http', 'ftp')):
+			if pallet.is_remote:
 				tempdir = tempfile.TemporaryDirectory()
 
 				try:
@@ -243,22 +281,25 @@ class Command(command):
 				except FetchError as e:
 					raise CommandError(self, e)
 
+			# TODO do we actually need the cwd?
 			cwd = os.getcwd()
-			mount_point = mount(iso)
+			self.mountPoint = mount(iso)
 			self.copy(clean, stacki_pallet_dir, updatedb, iso)
 			os.chdir(cwd)
+			# TODO add the umount to an exitstack
 			result = _exec(f'umount {self.mountPoint}', shlexsplit=True)
-			if iso.startswith(('http', 'ftp')):
+			if pallet.is_remote:
 				print('cleaning up temporary files ...')
 				os.unlink(local_file)
 
-		# CASE 3: some of the specified args are remote paths to already exploded pallet directories
-		for pallet in network_pallets:
-			self.runImplementation('network_pallet', (clean, stacki_pallet_dir, pallet, updatedb))
-
-		# CASE 4: some of the specified args are local paths to already exploded pallet directories
-		for pallet in disk_pallets:
-			self.runImplementation('disk_pallet', (clean, stacki_pallet_dir, pallet, updatedb))
+		# CASE 3: some of the specified args are remote paths to already expanded pallet directories
+		# CASE 4: some of the specified args are local paths to already expanded pallet directories
+		for pallet in pallets:
+			if pallet.is_remote:
+				imp = 'network_pallet'
+			if not pallet.is_remote:
+				imp = 'disk_pallet'
+			self.runImplementation(imp, (clean, stacki_pallet_dir, pallet, updatedb))
 
 		if self.dryrun:
 			self.endOutput(header=['name', 'version', 'release', 'arch', 'os'], trimOwner=False)

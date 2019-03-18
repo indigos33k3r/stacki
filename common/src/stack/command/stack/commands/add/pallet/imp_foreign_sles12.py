@@ -6,10 +6,9 @@
 #
 
 import os
-import shlex
-import subprocess
 import stack.commands
 from stack.exception import CommandError
+from stack.util import _exec
 
 
 class Implementation(stack.commands.Implementation):	
@@ -71,60 +70,29 @@ class Implementation(stack.commands.Implementation):
 
 
 	def run(self, args):
+		clean, prefix = args
+		# TODO fix this when we decide on attributes vs arguments
+		name, version, release, arch = self.name, self.vers, self.release, self.arch
 
-		(clean, prefix)	 = args
-
-		if not self.name:
+		if not name:
 			raise CommandError(self, 'unknown SLES on media')
-		if not self.vers:
+		if not vers:
 			raise CommandError(self, 'unknown SLES version on media')
-			
+
 		OS = 'sles'
-		roll_dir = os.path.join(prefix, self.name, self.vers, self.release, OS, self.arch)
-		destdir = roll_dir
 
-		if clean and os.path.exists(roll_dir):
-			self.owner.out.write('Cleaning %s version %s ' % (self.name, self.vers))
-			self.owner.out.write('for %s from pallets directory\n' % self.arch)
-			if not self.owner.dryrun:
-				os.system('/bin/rm -rf %s' % roll_dir)
-				os.makedirs(roll_dir)
+		pallet_dir = self.owner.actually_copy(prefix, name, version, release, OS, arch, clean)
+		self.owner.write_pallet_xml(prefix, name, version, release, OS, arch)
 
-		self.owner.out.write('Copying "%s" (%s,%s) pallet ...\n' % (self.name, self.vers, self.arch))
+		# Copy pallet patches into the respective pallet directory
+		# TODO this is one piece of the "pallet post-add hooks"
 
-		if not self.owner.dryrun:
-			if not os.path.exists(destdir):
-				os.makedirs(destdir)
-
-			cmd = 'rsync -a --exclude "TRANS.TBL" %s/ %s/' \
-				% (self.owner.mountPoint, destdir)
-			subprocess.call(shlex.split(cmd))
-			#
-			# create roll-<name>.xml file
-			#
-			xmlfile = open('%s/roll-%s.xml' % (roll_dir, self.name), 'w')
-
-			xmlfile.write('<roll name="%s" interface="6.0.2">\n' % self.name)
-			xmlfile.write('<color edge="white" node="white"/>\n')
-			xmlfile.write('<info version="%s" release="%s" arch="%s" os="%s"/>\n' % (self.vers, self.release, self.arch, OS))
-			xmlfile.write('<iso maxsize="0" addcomps="0" bootable="0"/>\n')
-			xmlfile.write('<rpm rolls="0" bin="1" src="0"/>\n')
-			xmlfile.write('</roll>\n')
-
-			xmlfile.close()
-
-		#
-		# Copy pallet patches into the respective pallet
-		# directory
-		#
-		patch_dir = '/opt/stack/%s-pallet-patches/%s/%s' % \
-			(self.name, self.vers, self.release)
+		patch_dir = f'/opt/stack/{name}-pallet-patches/{version}/{release}'
 		if os.path.exists(patch_dir):
-			self.owner.out.write('Patching %s pallet\n' % self.name)
+			self.owner.out.write(f'Patching {name} pallet\n')
 			if not self.owner.dryrun:
-				cmd = 'rsync -a %s/ %s/' % (patch_dir, destdir)
-				subprocess.call(shlex.split(cmd))
+				results = _exec('rsync --archive {patch_dir}/ {pallet_dir}/', shlexsplit=True)
+				if results.returncode != 0:
+					raise CommandError(self, 'patch failed:\n{results.stderr}')
 
-
-		return (self.name, self.vers, self.release, self.arch, OS, roll_dir)
-
+		return name, vers, release, arch, OS, pallet_dir

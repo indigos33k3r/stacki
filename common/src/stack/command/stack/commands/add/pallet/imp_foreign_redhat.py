@@ -11,102 +11,52 @@
 # @rocks@
 
 import os
-import shlex
-import subprocess
-import stack.file
+import stack
 import stack.commands
 
 
 class Implementation(stack.commands.Implementation):	
 	"""
-	Copy a Linux OS CD. This supports RHEL, CentOS,
-	Oracle Enterprise Linux, and Scientific Linux.
+	This supports RHEL, CentOS, Oracle "Enterprise" Linux, and Scientific Linux.
 	"""
 
 	def check_impl(self):
+		""" redhat distro's have a .treeinfo file """
 		self.treeinfo = os.path.join(self.owner.mountPoint, '.treeinfo')
-		if os.path.exists(self.treeinfo):
-			return True
-		return False
+		return os.path.exists(self.treeinfo)
 
 	def run(self, args):
-		import stack
+		clean, prefix = args
 
-		(clean, prefix) = args
-
-		name = None
-		vers = None
-		arch = None
-		release = None
-
-		file = open(self.treeinfo, 'r')
-		for line in file.readlines():
-			a = line.split('=')
-
-			if len(a) != 2:
-				continue
-
-			key = a[0].strip()
-			value = a[1].strip()
-
-			if key == 'family':
-				if value == 'Red Hat Enterprise Linux':
-					name = 'RHEL'
-				elif value.startswith('CentOS'):
-					name = 'CentOS'
-				elif value.startswith('Oracle'):
-					name = 'OLE'
-				elif value.startswith('Scientific'):
-					name = 'SL'
-			elif key == 'version':
-				vers = value
-			elif key == 'arch':
-				arch = value
-		file.close()
-
-		if not name:
-			name = "BaseOS"
-		if not vers:
-			vers = stack.version
-		if not arch:
-			arch = 'x86_64'
-		if not release:
-			release = stack.release
-			
+		name = "BaseOS"
+		version = stack.version
+		release = stack.release
 		OS = 'redhat'
-		roll_dir = os.path.join(prefix, name, vers, release, OS, arch)
-		destdir = roll_dir
+		arch = 'x86_64'
 
-		if clean and os.path.exists(roll_dir):
-			self.owner.out.write('Cleaning %s %s-%s\n' % (name, vers, release))
-			self.owner.out.write('for %s from pallets directory\n' % self.arch)
+		with open(self.treeinfo, 'r') as fi:
+			for line in fi.readlines():
+				kv = line.split('=')
+				if len(kv) != 2:
+					continue
 
-			if not self.owner.dryrun:
-				os.system('/bin/rm -rf %s' % roll_dir)
-				os.makedirs(roll_dir)
+				key, value = kv[0].strip(), kv[1].strip()
 
-		self.owner.out.write('Copying %s %s-%s pallet ...\n' % (name, vers, release))
+				if key == 'family':
+					if value == 'Red Hat Enterprise Linux':
+						name = 'RHEL'
+					elif value.startswith('CentOS'):
+						name = 'CentOS'
+					elif value.startswith('Oracle'):
+						name = 'OLE'
+					elif value.startswith('Scientific'):
+						name = 'SL'
+				elif key == 'version':
+					version = value
+				elif key == 'arch':
+					arch = value
 
-		if not self.owner.dryrun:
-			if not os.path.exists(destdir):
-				os.makedirs(destdir)
+		pallet_dir = self.owner.actually_copy(prefix, name, version, release, OS, arch, clean)
+		self.owner.write_pallet_xml(prefix, name, version, release, OS, arch)
 
-			cmd = 'rsync -a --exclude "TRANS.TBL" %s/ %s/' \
-				% (self.owner.mountPoint, destdir)
-			subprocess.call(shlex.split(cmd))
-
-			#
-			# create roll-<name>.xml file
-			#
-			xmlfile = open('%s/roll-%s.xml' % (roll_dir, name), 'w')
-
-			xmlfile.write('<roll name="%s" interface="6.0.2">\n' % name)
-			xmlfile.write('<color edge="white" node="white"/>\n')
-			xmlfile.write('<info version="%s" release="%s" arch="%s" os="%s"/>\n' % (vers, release, arch, OS))
-			xmlfile.write('<iso maxsize="0" addcomps="0" bootable="0"/>\n')
-			xmlfile.write('<rpm rolls="0" bin="1" src="0"/>\n')
-			xmlfile.write('</roll>\n')
-
-			xmlfile.close()
-
-		return (name, vers, release, arch, OS, roll_dir)
+		return name, version, release, arch, OS, pallet_dir
