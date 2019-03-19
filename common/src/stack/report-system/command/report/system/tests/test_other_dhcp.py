@@ -1,67 +1,55 @@
 import struct
 import socket
 import pytest
+import binascii
 from stack import api
 from random import randint
 
 pxe_networks = [net['network'] for net in api.Call('list network', args=['pxe=true'])]
-interfaces = api.Call('list.host.interface', args=['a:frontend']) 
+interfaces = api.Call('list.host.interface', args=['a:frontend'])
 pxe_interfaces = [inter['interface'] for inter in interfaces if inter['network'] in pxe_networks]
 
 
-class DHCPPacket:
-	def __init__(self):
-		self.transactionID = b''
-		self.mac_addr = b'\00\x26\x9e\x04\x1e\x9b'
-		for i in range(4):
-			t = randint(0, 255)
-			self.transactionID += struct.pack('!B', t)
+def build_dhcp_packet():
 
-	def build_packet(self):
-		packet = b''
-		# Boot Request
-		packet += b'\x01'
-		# Ethernet
-		packet += b'\x01'
-		# Hardware address length
-		packet += b'\x06'
-		# Hops
-		packet += b'\x00'
-		# Transaction ID
-		packet += self.transactionID
-		# Seconds elapsed
-		packet += b'\x00\x00'
-		# Bootp flags set to broadcast
-		packet += b'\x80\x00'
-		# Client IP
-		packet += b'\x00\x00\x00\x00'
-		# Your client IP
-		packet += b'\x00\x00\x00\x00'
-		# Next server IP
-		packet += b'\x00\x00\x00\x00'
-		# Relay agent IP
-		packet += b'\x00\x00\x00\x00'
-		# MAC address
-		packet += self.mac_addr
-		# MAC address padding
-		packet += b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
-		# Blank server name
-		packet += b'\x00' * 67
-		# Blank boot file name
-		packet += b'\x00' * 125
-		# Magic DHCP cookie
-		packet += b'\x63\x82\x53\x63'
-		# Option: DHCP discover message type
-		packet += b'\x35\x01\x01'
-		# Client identifier
-		packet += b'\x3d\x06' + self.mac_addr
-		# Parameter Request list
-		packet += b'\x37\x03\x03\x01\x06'
-		# End Option
-		packet += b'\xff'
-		return packet
+	# Unique MAC address
+	mac = ''.join('%02x'%randint(0,255) for x in range(6))
+	mac_address = binascii.unhexlify(mac)
 
+	# Ensure a unique transaction id when a DHCP request
+	# is sent back
+	transaction_id = b''
+	for i in range(4):
+		t = randint(0, 255)
+		transaction_id += struct.pack('!B', t)
+			
+	# Build DHCP discover packet in binary form
+	packet = dict(
+		boot_request =  b'\x01',
+		ethernet =  b'\x01',
+	 	mac_length = b'\x06',
+		hops =  b'\x00',
+		trans_id = transaction_id,
+		seconds = b'\x00\x00',
+	 	bootp_flags = b'\x80\x00',
+		client_ip =  b'\x00\x00\x00\x00',
+		your_ip =  b'\x00\x00\x00\x00',
+		server_ip =  b'\x00\x00\x00\x00',
+		relay_ip =  b'\x00\x00\x00\x00',
+		mac_addr = mac_address,
+		mac_padding =  b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00',
+		server_name = b'\x00' * 67,
+		boot_file =  b'\x00' * 125,
+		magic_cookie =  b'\x63\x82\x53\x63',
+		dhcp_option = b'\x35\x01\x01',
+		client_identifier =  b'\x3d\x06' + mac_address,
+		parameter_list = b'\x37\x03\x03\x01\x06',
+		end_option =  b'\xff'
+	)
 
+	return (packet, transaction_id)
+
+# Run test on every interface that is setup for pxe booting
 @pytest.mark.parametrize('interface', pxe_interfaces)
 def test_other_dhcp_server(interface):
 	# Set up socket with passed in interface
@@ -77,8 +65,14 @@ def test_other_dhcp_server(interface):
 		send_dhcp.close()
 		pytest.skip("Port 68 in use, make sure another service isn't using it.")
 
-	dhcp_discover_packet = DHCPPacket()
-	send_dhcp.sendto(dhcp_discover_packet.build_packet(), ('<broadcast>', 67))
+	dhcp_discover_packet, trans_id = build_dhcp_packet()
+
+	# Flatten packet info so it can be sent via socket
+	packet = b''
+	for value in dhcp_discover_packet.values():
+		packet += value
+
+	send_dhcp.sendto(packet, ('<broadcast>', 67))
 
 	send_dhcp.settimeout(3)
 
@@ -88,7 +82,9 @@ def test_other_dhcp_server(interface):
 	try:
 		data = send_dhcp.recv(1024)
 		send_dhcp.close()
-		if data[4:8] == dhcp_discover_packet.transactionID:
+		# If the transaction id's match, this offer
+		# was for us from our original request
+		if data[4:8] == trans_id:
 			# Get our offered IP
 			offer_ip = '.'.join(map(lambda x: str(x), data[16:20]))
 			# Get the IP of the dhcp sever
