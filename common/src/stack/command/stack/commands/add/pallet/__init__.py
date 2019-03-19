@@ -273,20 +273,20 @@ class Command(command):
 			if pallet.format != 'iso':
 				continue
 
-			local_file = pallet
+			local_file = pallet.location
 			if pallet.is_remote:
 				tempdir = tempfile.TemporaryDirectory()
 
 				try:
 					# passing True will display a % progress indicator in stdout
-					local_file = fetch(pallet, username, password, True, f'{tempdir.name}/{pathlib.Path(pallet).name}')
+					local_file = fetch(pallet.location, username, password, True, f'{tempdir.name}/{pathlib.Path(pallet).name}')
 				except FetchError as e:
 					raise CommandError(self, e)
 
 			# TODO do we actually need the cwd?
 			cwd = os.getcwd()
 			self.mountPoint = self.mount(local_file)
-			self.copy(clean, stacki_pallet_dir, updatedb, pallet)
+			self.copy(clean, stacki_pallet_dir, updatedb, pallet.location)
 			os.chdir(cwd)
 			# TODO add the umount to an exitstack
 			result = _exec(f'umount {self.mountPoint}', shlexsplit=True)
