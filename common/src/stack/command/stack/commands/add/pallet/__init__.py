@@ -199,7 +199,8 @@ class Command(command):
 		# in sles12 that prevents re-mounting an already mounted iso
 		mount = _exec(f'mount --read-only {tempdir.name}', shlexsplit=True)
 		if mount.returncode != 0:
-			raise CommandError(self, 'Pallet could not be added - unable to mount {iso_name}.\n{mount.stderr}')
+			msg = f'Pallet could not be added - unable to mount {iso_name}.'
+			raise CommandError(self, f'{msg}\n{mount.stderr}')
 
 		return tempdir.name
 
