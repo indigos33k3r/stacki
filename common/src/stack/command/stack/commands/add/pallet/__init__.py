@@ -297,6 +297,9 @@ class Command(command):
 		# CASE 3: some of the specified args are remote paths to already expanded pallet directories
 		# CASE 4: some of the specified args are local paths to already expanded pallet directories
 		for pallet in pallets:
+			if pallet.format == 'iso':
+				continue
+
 			if pallet.is_remote:
 				imp = 'network_pallet'
 			if not pallet.is_remote:

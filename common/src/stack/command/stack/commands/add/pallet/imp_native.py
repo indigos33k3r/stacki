@@ -40,7 +40,12 @@ class Implementation(stack.commands.Implementation):
 		# after copying the roll, make sure everyone (apache included)
 		# can traverse the directories
 		if not self.owner.dryrun:
-			result = _exec(r'find {roll_dir} -type d -exec chmod a+rx {} \;')
+#			print('find', roll_dir, '-type', 'd', '-exec', 'chmod a+rx {} \\;')
+#			result = _exec('find', roll_dir, '-type', 'd', '-exec', 'chmod a+rx {} ;'
+#			])
+			result = _exec([
+				'find', roll_dir, '-type', 'd', '-exec', 'chmod', 'a+rx', '{}', ';'
+			])
 			if result.returncode != 0:
 				msg = 'Error while attempting to give apache read access to the pallets\n'
 				raise CommandError(self, msg + result.stderr)
