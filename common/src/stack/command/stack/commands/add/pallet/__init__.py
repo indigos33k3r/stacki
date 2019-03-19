@@ -96,6 +96,7 @@ class Command(command):
 
 	def actually_copy(self, pallet_dir, name, version, release, distro_family, arch, clean):
 		destdir = pathlib.Path(pallet_dir).joinpath(name, version, release, distro_family, arch)
+		print(destdir)
 		if destdir.exists() and clean:
 			self.out.write(f'Cleaning {name} {version}-{release}\n')
 			self.out.write(f'for {arch} from pallets directory\n')
@@ -109,7 +110,8 @@ class Command(command):
 			destdir.mkdir(parents=True, exist_ok=True)
 
 		if not self.dryrun:
-			cmd = f'rsync --archive --exclude "TRANS.TBL" {self.mountPoint}/ {destdir}/'
+			cmd = f'rsync --archive --exclude "TRANS.TBL" {self.mountPoint}/ {pallet_dir}/'
+			print(cmd)
 			result = _exec(cmd, shlexsplit=True)
 			if result.returncode != 0:
 				raise CommandError(self, f'Unable to copy pallet:\n{result.stderr}')
@@ -162,7 +164,8 @@ class Command(command):
 		#
 		# For all pallets present, copy into the pallets directory.
 		
-		for key, info in pallet_info.items():
+		for info in pallet_info.values():
+			print(clean, prefix, info)
 			self.runImplementation('native', (clean, prefix, info))
 			name	= info.getRollName()
 			version	= info.getRollVersion()
@@ -191,18 +194,15 @@ class Command(command):
 				""", (name, version, release, arch, OS, URL)
 			)
 
-	def mount(self, iso_name):
+	def mount(self, iso_name, mount_point):
 		# TemporaryDirectory() cleans up when the process exits
 		# TODO what happens to tempdir/the actual mount?
-		tempdir = tempfile.TemporaryDirectory()
 		# mount readonly explicitly to get around a weird behavior
 		# in sles12 that prevents re-mounting an already mounted iso
-		mount = _exec(f'mount --read-only {iso_name} {tempdir.name}', shlexsplit=True)
+		mount = _exec(f'mount --read-only {iso_name} {mount_point}', shlexsplit=True)
 		if mount.returncode != 0:
 			msg = f'Pallet could not be added - unable to mount {iso_name}.'
 			raise CommandError(self, f'{msg}\n{mount.stderr}')
-
-		return tempdir.name
 
 	def run(self, params, args):
 		(clean, stacki_pallet_dir, updatedb, dryrun, username, password) = self.fillParams([
@@ -285,11 +285,15 @@ class Command(command):
 
 			# TODO do we actually need the cwd?
 			cwd = os.getcwd()
-			self.mountPoint = self.mount(local_file)
+			tempdir = tempfile.TemporaryDirectory()
+			self.mount(local_file, tempdir.name)
+			self.mountPoint = tempdir.name
 			self.copy(clean, stacki_pallet_dir, updatedb, pallet.location)
 			os.chdir(cwd)
 			# TODO add the umount to an exitstack
 			result = _exec(f'umount {self.mountPoint}', shlexsplit=True)
+			if result.returncode != 0:
+				raise CommandError(self, f'unable to umount {self.mountPoint}\n{result.stderr}')
 			if pallet.is_remote:
 				print('cleaning up temporary files ...')
 				os.unlink(local_file)
