@@ -197,7 +197,7 @@ class Command(command):
 		tempdir = tempfile.TemporaryDirectory()
 		# mount readonly explicitly to get around a weird behavior
 		# in sles12 that prevents re-mounting an already mounted iso
-		mount = _exec(f'mount --read-only {tempdir.name}', shlexsplit=True)
+		mount = _exec(f'mount --read-only {iso_name} {tempdir.name}', shlexsplit=True)
 		if mount.returncode != 0:
 			msg = f'Pallet could not be added - unable to mount {iso_name}.'
 			raise CommandError(self, f'{msg}\n{mount.stderr}')
@@ -285,7 +285,7 @@ class Command(command):
 
 			# TODO do we actually need the cwd?
 			cwd = os.getcwd()
-			self.mountPoint = self.mount(pallet)
+			self.mountPoint = self.mount(local_file)
 			self.copy(clean, stacki_pallet_dir, updatedb, pallet)
 			os.chdir(cwd)
 			# TODO add the umount to an exitstack
