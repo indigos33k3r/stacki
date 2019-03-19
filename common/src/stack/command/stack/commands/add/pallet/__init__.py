@@ -111,7 +111,7 @@ class Command(command):
 		if not self.dryrun:
 			cmd = f'rsync --archive --exclude "TRANS.TBL" {self.mountPoint}/ {destdir}/'
 			result = _exec(cmd, shlexsplit=True)
-			if result.rc != 0:
+			if result.returncode != 0:
 				raise CommandError(self, f'Unable to copy pallet:\n{result.stderr}')
 
 		return destdir
