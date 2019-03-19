@@ -214,7 +214,7 @@ class Command(command):
 		])
 
 		# need to provide either both or none
-		if not all((username, password)):
+		if username or password and not all((username, password)):
 			raise UsageError(self, 'must supply a password along with the username')
 
 		clean = self.str2bool(clean)
