@@ -63,16 +63,16 @@ class Command(stack.commands.Command,
 
 		# make it real ugly.
 		if exitonfail and not pretty:
-			_return_code = main(['--verbose', '--exitfirst', *args, *tests])
+			_return_code = main(['--verbose', '--exitfirst', '-rs', *args, *tests])
 		# exit with first failure
 		elif exitonfail:
-			_return_code = main(['--verbose', '--capture=no', '--exitfirst', *args, *tests])
+			_return_code = main(['--verbose', '--capture=no', '--exitfirst', '-rs', *args, *tests])
 		# show tracebacks of failures but don't fail.
 		elif not pretty:
-			_return_code = main(['--verbose', '--capture=no', *args, *tests])
+			_return_code = main(['--verbose', '--capture=no', '-rs', *args, *tests])
 		# pretty and no tracebacks
 		else:
-			_return_code = main(['--verbose', '--capture=no', '--tb=no', *args, *tests])
+			_return_code = main(['--verbose', '--capture=no', '--tb=no', '-rs', *args, *tests])
 
 		os.chdir(current_dir)
 
