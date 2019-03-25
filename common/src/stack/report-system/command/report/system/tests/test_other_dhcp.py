@@ -3,6 +3,7 @@ import socket
 import pytest
 import binascii
 from stack import api
+from stack.util import _exec
 from random import randint
 
 pxe_networks = [net['network'] for net in api.Call('list network', args=['pxe=true'])]
@@ -62,7 +63,9 @@ def test_other_dhcp_server(interface):
 
 	except OSError:
 		send_dhcp.close()
-		pytest.skip("Port 68 in use, make sure another service isn't using it.")
+		dhcp_port_process = _exec('netstat -tulpn | grep :68', shell=True).stdout
+		dhcp_process_name = dhcp_port_process.split()[-1].split('/')[-1]
+		pytest.skip(f'Port 68 needs to be not in use for test, it is currently bound to process {dhcp_process_name}.')
 
 	dhcp_discover_packet, trans_id = build_dhcp_packet(pxe_interfaces[interface].replace(':', ''))
 
@@ -83,12 +86,6 @@ def test_other_dhcp_server(interface):
 	try:
 		data = send_dhcp.recv(1024)
 
-		# If the transaction id's match, this offer
-		# was for us from our original request
-		# If not try to get more data in case the id does match
-		while data[4:8] != trans_id:
-			data = send_dhcp.recv(1024)
-
 		# Get our offered IP
 		offer_ip = '.'.join(map(lambda x: str(x), data[16:20]))
 
@@ -98,13 +95,6 @@ def test_other_dhcp_server(interface):
 
 	# If we don't get an offer, there isn't a rogue server on the network
 	except socket.timeout:
-		if data and data[4:8] != trans_id:
-			assert False, f'Received data from DHCP server but could not confirm offer is for our request.' 
-		else:
-			pass
-	
-	finally:
 		send_dhcp.close()
 
 	assert not errors, f'Other DHCP servers have been found: {",".join(errors)}'
-
